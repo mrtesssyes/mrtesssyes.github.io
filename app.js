@@ -290,9 +290,10 @@ async function decodeAudioBlob(blob, cols=320, rows=256, options={}){
   const tonesPerLine = Math.max(1, Math.floor(samplesPerLine / samplesPerTone));
   let toneMultiplier = 1;
   if(tonesPerLine / desiredCols > 2.0) toneMultiplier = 3;
-
-  // compute output rows (use number of detected syncs as upper bound)
-  const outCols = desiredCols; const outRows = Math.min(rows, Math.max(1, Math.floor(strongPeaks.length)));
+  // compute output rows using total tones estimate
+  const outCols = desiredCols;
+  const totalTonesEstimate = Math.floor(chan.length / samplesPerTone);
+  const outRows = Math.min(rows, Math.max(1, Math.floor(totalTonesEstimate / (outCols * toneMultiplier))));
   const imgData = new Uint8ClampedArray(outCols*outRows*4);
 
   // Decode each line with alignment
@@ -346,13 +347,39 @@ function simpleDecodeFallback(chan, sampleRate, outCols, outRows, options){
 
 // Helper: detect frequency centroid in a frame and map to 0..255 grayscale
 function detectFrameToGray(frame, sampleRate){
+  // allow detector selection via UI: goertzel (default) or fft (fft.js)
+  const detector = document.getElementById('detectorSelect')?.value || 'goertzel';
   const N = frame.length;
+  if(N <= 0) return 0;
   const win = new Float32Array(N); for(let i=0;i<N;i++) win[i]=0.54-0.46*Math.cos(2*Math.PI*i/(N-1));
   const windowed = new Float32Array(N); for(let i=0;i<N;i++) windowed[i]=frame[i]*win[i];
-  let weightedSum=0, weightTotal=0;
   // read freq min/max from UI
   const fmin = parseFloat(document.getElementById('freqMin')?.value) || 1500;
   const fmax = parseFloat(document.getElementById('freqMax')?.value) || 2300;
+  if(detector === 'fft' && typeof FFT === 'function'){
+    // use fft.js (FFT) for a peak-based estimate
+    try{
+      const fftSize = 1<<Math.ceil(Math.log2(N));
+      const f = new FFT(fftSize);
+      const re = new Array(fftSize).fill(0);
+      const im = new Array(fftSize).fill(0);
+      for(let i=0;i<N;i++) re[i]=windowed[i];
+      f.transform(re, im);
+      // compute magnitudes and find peak bin in fmin..fmax range
+      let bestBin=0, bestMag=0;
+      for(let bin=0; bin<fftSize/2; bin++){
+        const freq = bin * (sampleRate / fftSize);
+        if(freq < fmin-200 || freq > fmax+200) continue;
+        const mag = Math.sqrt(re[bin]*re[bin] + im[bin]*im[bin]);
+        if(mag > bestMag){ bestMag = mag; bestBin = bin; }
+      }
+      const freqEstimate = bestBin * (sampleRate / fftSize);
+      const norm = (freqEstimate - fmin)/(fmax-fmin); const clamped = Math.max(0, Math.min(1, norm));
+      return Math.floor(clamped*255);
+    }catch(e){ /* fallback to goertzel below */ }
+  }
+  // default: Goertzel centroid across candidate freqs
+  let weightedSum=0, weightTotal=0;
   for(let f=Math.max(800, fmin-200); f<=Math.min(4000, fmax+200); f+=10){ const mag=goertzel(windowed, sampleRate, f); weightedSum+=mag*f; weightTotal+=mag; }
   const freqEstimate = weightTotal>0 ? (weightedSum/weightTotal) : (fmin+fmax)/2;
   const norm = (freqEstimate - fmin)/(fmax-fmin); const clamped = Math.max(0, Math.min(1, norm));
@@ -361,16 +388,30 @@ function detectFrameToGray(frame, sampleRate){
 
 function drawDecodedImage(imgObj){
   const canvas = document.getElementById('decodedCanvas');
-  canvas.width = imgObj.width; canvas.height = imgObj.height;
+  const useDPR = document.getElementById('useDPR')?.checked;
+  const dpr = useDPR ? (window.devicePixelRatio || 1) : 1;
+  canvas.width = Math.max(1, Math.floor(imgObj.width * dpr));
+  canvas.height = Math.max(1, Math.floor(imgObj.height * dpr));
+  canvas.style.width = imgObj.width + 'px';
+  canvas.style.height = imgObj.height + 'px';
   const ctx = canvas.getContext('2d');
+  if(dpr !== 1) ctx.setTransform(dpr,0,0,dpr,0,0); else ctx.setTransform(1,0,0,1,0,0);
   const id = new ImageData(imgObj.data,imgObj.width,imgObj.height);
   ctx.putImageData(id,0,0);
 }
 
 function drawLiveImage(imgObj){
   const canvas = document.getElementById('liveDecodedCanvas');
-  canvas.width = imgObj.width; canvas.height = imgObj.height;
+  // Set internal buffer size to image size, but scale display size using UI controls
+  const canvasWidth = parseInt(document.getElementById('liveDisplayWidth')?.value) || 640;
+  const canvasHeight = parseInt(document.getElementById('liveDisplayHeight')?.value) || 512;
+  const useDPR = document.getElementById('useDPR')?.checked;
+  const dpr = useDPR ? (window.devicePixelRatio || 1) : 1;
+  canvas.width = Math.max(1, Math.floor(imgObj.width * dpr));
+  canvas.height = Math.max(1, Math.floor(imgObj.height * dpr));
+  canvas.style.width = canvasWidth + 'px'; canvas.style.height = canvasHeight + 'px';
   const ctx = canvas.getContext('2d');
+  if(dpr !== 1) ctx.setTransform(dpr,0,0,dpr,0,0); else ctx.setTransform(1,0,0,1,0,0);
   const id = new ImageData(imgObj.data,imgObj.width,imgObj.height);
   ctx.putImageData(id,0,0);
 }
@@ -392,27 +433,55 @@ function startLiveDecoding(analyser, cols=160, rows=128){
   function step(){
     analyser.getFloatTimeDomainData(floatBuf);
   // decode this frame into a small number of pixels
-    const samplesPerTone = Math.max(4, Math.floor(audioCtx.sampleRate * 0.01)); // assume ~10ms per tone
+    // Allow automatic tone-length detection from the analyser buffer if enabled
+    let samplesPerTone = Math.max(4, Math.floor(audioCtx.sampleRate * 0.01)); // default ~10ms
+    try{
+      if(document.getElementById('autoToneDetect')?.checked){
+        // quick estimate: compute autocorrelation on the buffer to find repeating period
+        const buf = floatBuf;
+        const N = buf.length;
+        let bestLag=0, bestScore=Infinity;
+        const maxLag = Math.min(2000, Math.floor(N/4));
+        for(let lag=1; lag<maxLag; lag++){
+          let acc=0;
+          for(let i=0;i+lag<N;i+=2) acc += Math.abs(buf[i] - buf[i+lag]);
+          if(acc < bestScore){ bestScore = acc; bestLag = lag; }
+        }
+        if(bestLag > 4) samplesPerTone = Math.max(4, Math.floor(bestLag));
+      }
+    }catch(e){ /* ignore and use default */ }
     const numPixelsThisFrame = Math.max(1, Math.floor((floatBuf.length) / samplesPerTone));
     let idx=0;
   // clear only the pixels we will rewrite this frame to avoid cumulative darkening
   // (we'll reset the whole image on each call for simplicity)
   for(let i=0;i<imgData.length;i++) imgData[i]=0;
+  // We'll consume the analyser buffer sequentially and attempt RGB decoding when there are at least
+  // three tone-sized blocks available (the encoder uses sequential R,G,B tones). Otherwise fallback to
+  // a single grayscale centroid per-pixel.
+  let pos = 0;
   for(let i=0;i<numPixelsThisFrame && pIndex < outCols*outRows;i++){
-      const start = i * samplesPerTone;
-      const frame = floatBuf.subarray(start, Math.min(start+samplesPerTone, floatBuf.length));
-      // tiny hamming
-      const N=frame.length; const win=new Float32Array(N);
-      for(let w=0;w<N;w++) win[w]=0.54-0.46*Math.cos(2*Math.PI*w/(N-1));
-      const windowed = new Float32Array(N); for(let w=0;w<N;w++) windowed[w]=frame[w]*win[w];
-      // centroid freq
-      let weightedSum=0, weightTotal=0;
-      for(let f=1200; f<=2400; f+=20){ const mag=goertzel(windowed, audioCtx.sampleRate, f); weightedSum+=mag*f; weightTotal+=mag; }
-      const freqEst = weightTotal>0 ? (weightedSum/weightTotal) : 1500;
-      const norm = (freqEst - 1500)/(2300-1500); const clamped = Math.max(0, Math.min(1, norm));
-      const gray = Math.floor(clamped*255);
-      const px = pIndex % outCols; const py = Math.floor(pIndex / outCols);
-      const idxx = (py*outCols+px)*4; imgData[idxx]=imgData[idxx+1]=imgData[idxx+2]=gray; imgData[idxx+3]=255;
+      // if there is room for three consecutive tone-frames, try decoding as R,G,B
+      if(pos + samplesPerTone*3 <= floatBuf.length){
+        const chVals = [];
+        for(let ch=0; ch<3; ch++){
+          const start = pos + ch*samplesPerTone;
+          const frame = floatBuf.subarray(start, Math.min(start+samplesPerTone, floatBuf.length));
+          // reuse existing detector to compute per-channel brightness
+          const v = detectFrameToGray(frame, audioCtx.sampleRate);
+          chVals.push(v);
+        }
+        const px = pIndex % outCols; const py = Math.floor(pIndex / outCols);
+        const idxx = (py*outCols+px)*4; imgData[idxx]=chVals[0]; imgData[idxx+1]=chVals[1]; imgData[idxx+2]=chVals[2]; imgData[idxx+3]=255;
+        pos += samplesPerTone*3;
+      } else {
+        // single-tone grayscale
+        const start = pos;
+        const frame = floatBuf.subarray(start, Math.min(start+samplesPerTone, floatBuf.length));
+        const gray = detectFrameToGray(frame, audioCtx.sampleRate);
+        const px = pIndex % outCols; const py = Math.floor(pIndex / outCols);
+        const idxx = (py*outCols+px)*4; imgData[idxx]=imgData[idxx+1]=imgData[idxx+2]=gray; imgData[idxx+3]=255;
+        pos += samplesPerTone;
+      }
       pIndex++;
     }
     drawLiveImage({width:outCols, height:outRows, data:imgData});
@@ -474,8 +543,8 @@ function bufferSynchronizedLiveDecode(bufObj, sourceNode, cols=320, rows=256){
             // assume sequence R,G,B tones; attempt to decode three tones and assign to channels
             const channelVals = [];
             for(let ch=0; ch<meta.toneMultiplier; ch++){
-              const toneIdx = (toneIndex + ch) * samplesPerTone;
-              const frameCh = bufObj.buffer.subarray(toneIdx, Math.min(toneIdx+samplesPerTone, bufObj.buffer.length));
+              const startSampleCh = headerOffset + (toneIndex + ch) * samplesPerTone;
+              const frameCh = bufObj.buffer.subarray(startSampleCh, Math.min(startSampleCh+samplesPerTone, bufObj.buffer.length));
               const Nch = frameCh.length; const winch = new Float32Array(Nch);
               for(let w=0;w<Nch;w++) winch[w]=0.54-0.46*Math.cos(2*Math.PI*w/(Nch-1));
               const windowedCh = new Float32Array(Nch); for(let w=0;w<Nch;w++) windowedCh[w]=frameCh[w]*winch[w];
