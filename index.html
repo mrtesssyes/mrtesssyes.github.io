@@ -1,104 +1,69 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Maxwell cat Radio</title>
-    <style>
-      /* Define a class for the iframe */
-      iframe {
-        display: block;
-        margin: 0 auto; /* center the iframe horizontally */
-        text-align: center;
-      }
-       .centered-gify{
-         display:block; 
-        margin: 0 auto;
-                    }
-      /* Define a class for the body */
-      body {
-        font-family: Arial, sans-serif;
-        background-image: url('https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/i/521e3494-e215-493a-8a5f-fe816610600d/d6485m9-c61d3339-9dc0-4361-a0b5-7ed5eb2aeaa7.png/v1/fill/w_965,h_675,strp/a_random_background_un_fondo_al_azar_by_minecandlove_d6485m9-fullview.png');
-        background-size: cover;
-        margin: 0;
-        padding: 0;
-      }
-      
-      /* Define a class for the header */
-      header {
-        background-color: #06411c;
-        color: antiquewhite;
-        padding: 10px;
-        text-align: center;
-        font-style: oblique;
-        font-family: Georgia, 'Times New Roman', Times, serif;
-      }
-      
-      /* Define a class for the main content */
-      main {
-        margin: 0;
-        padding: 10px;
-      }
-      
-      /* Define a class for the link */
-      a img {
-        width: 200px; /* adjust to your desired size */
-        position: absolute;
-        transition: all .2s ease-in-out; /* to create animation effect */
-      }
-      
-
-      /* Define a class for the article */
-      article {
-        background-color: rgb(25, 70, 40);
-        color: antiquewhite;
-        padding: 20px;
-        margin-bottom: 10px;
-        text-align: center;
-        font-family: Georgia, 'Times New Roman', Times, serif;
-        font-size: 150%;
-      }
-
-      /* Define a class for the footer */
-      footer {
-        background-color: #14291c;
-        color: antiquewhite;
-        padding: 10px;
-        text-align: center;
-        position: absolute;
-        bottom: 1;
-        width: 100%;
-      }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Maxwell Cat FM</h1>
-      <h2>A radio for cat lovers :3! 24/7</h2>
-    </header>
-    <main>
-      <iframe width="420" height="315" src="https://www.youtube.com/embed/N1PPvzV0tm4?autoplay=1&controls=0&loop=1" frameborder="0" 
-      allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen>
-      </iframe>
-      &nbsp;
-      &nbsp;
-      &nbsp;
-      <iframe src="https://zeno.fm/player/maxwell-cat-radio" width="768" height="300" frameborder="0" scrolling="no"></iframe><a href="https://zeno.fm/" target="_blank" style="display: block; font-size: 0.9em; line-height: 10px;">A Zeno.FM Station</a>
-      <article>
-        <h2>Welcome!</h2>
-        <p>This is the offical website for the maxwell-cat-radio. Above we have the link to the online radio.</p>
-        <img class="centered-gify" src="https://media.tenor.com/SDwGg31pp4AAAAAC/maxwell-the-cat-maxwell.gif" >
-      </article>
-      <article>
-        <h2>Announcements</h2>
-
-
-      </article>
-      <article>
-        <h2> contact info zenstrickergaming@gmail.com </h2>
-      </article>
-    </main>
-    <footer>
-      Copyright &copy; 2023 Maxwell Cat Radio
-    </footer>
-  </body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SSTV Web Emulator</title>
+  <link rel="stylesheet" href="static/styles.css">
+  <!-- Optional DSP/FFT libraries (loaded from CDNs) for improved decoding accuracy -->
+  <script src="https://cdn.jsdelivr.net/npm/fft.js@0.3.0/dist/fft.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dsp.js@1.0.0/dsp.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>SSTV Web Emulator (Browser-only)</h1>
+    <p class="note">This is an audio-only SSTV encoder/decoder emulator. It does NOT transmit RF — use only for learning and offline testing.</p>
+  </header>
+  <main>
+    <section class="controls">
+      <div class="col">
+        <h2>Encoder</h2>
+        <label>Image to send (PNG/JPEG): <input id="imgFile" type="file" accept="image/*"></label>
+        <label>Mode: <select id="modeSelect"><option>Scottie S1 (simulated)</option></select></label>
+        <label>Color mode: <select id="colorMode"><option value="grayscale">Grayscale</option><option value="rgb">RGB</option></select></label>
+  <label>Playback sample rate: <input id="sampleRate" type="number" value="44100"></label>
+  <label>Encode duration (seconds): <input id="encodeDuration" type="number" value="10" min="1" step="1"></label>
+        <label>Volume: <input id="volumeControl" type="range" min="0" max="1" step="0.01" value="1"></label>
+        <div class="buttons">
+          <button id="encodeBtn">Encode & Play</button>
+          <button id="pauseBtn" disabled>Pause</button>
+          <button id="stopBtn" disabled>Stop</button>
+          <button id="downloadWavBtn" disabled>Download WAV</button>
+        </div>
+        <label>Frequency scale min (Hz): <input id="freqMin" type="number" value="1500"></label>
+        <label>Frequency scale max (Hz): <input id="freqMax" type="number" value="2300"></label>
+        <canvas id="previewCanvas" width="320" height="256"></canvas>
+      </div>
+      <div class="col">
+        <h2>Live Decoder</h2>
+        <label><input id="liveDecodeToggle" type="checkbox"> Live decode while playing</label>
+        <div class="buttons">
+          <button id="startLiveDecodeBtn" disabled>Start Live Decode</button>
+          <button id="stopLiveDecodeBtn" disabled>Stop Live Decode</button>
+        </div>
+        <canvas id="liveDecodedCanvas" width="320" height="256"></canvas>
+      </div>
+      <div class="col">
+        <h2>Decoder</h2>
+        <label>Upload SSTV audio (WAV/MP3): <input id="audioFile" type="file" accept="audio/*"></label>
+  <label>Decode duration (seconds): <input id="decodeDuration" type="number" value="10" min="1" step="1"></label>
+  <label>Resolution (width px): <input id="resolutionSlider" type="range" min="32" max="512" value="320"></label>
+        <div class="buttons">
+          <button id="decodeBtn">Decode Uploaded</button>
+          <button id="micListenBtn">Use Microphone</button>
+          <button id="stopMicBtn" disabled>Stop Mic</button>
+        </div>
+        <canvas id="decodedCanvas" width="320" height="256"></canvas>
+      </div>
+    </section>
+    <section class="visuals">
+      <h2>Waveform / Spectrum</h2>
+      <canvas id="viz" width="640" height="128"></canvas>
+    </section>
+  </main>
+  <footer>
+    <p>Legal: This tool emulates SSTV audio only. It does not connect to radio hardware. Do not use to transmit on air unless you hold valid licenses and comply with local regulations.</p>
+  </footer>
+<script src="static/app.js"></script>
+</body>
 </html>
-       
